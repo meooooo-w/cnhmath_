@@ -202,7 +202,7 @@
             </tr>
             <tr>
               <th rowspan="2"></th>
-              <th>#9</th><th>#10</th><th>#11</th><th>#12</th><th>낙오1회</th><th>낙오2회</th><th>낙오3회</th><th>낙오4회</th>
+              <th>#9</th><th>#10</th><th>#11</th><th>#12</th><th>낙모1회</th><th>낙모2회</th><th>낙모3회</th><th>낙모4회</th>
             </tr>
             <tr>
               <td><select class="inline" id="hw-9"><option>-</option><option>○</option><option>△</option><option>X</option></select></td>
@@ -449,14 +449,15 @@ function renderAdminList() {
     const jList = allJournals.filter(j => j.studentId === s.id);
     const latest = jList.sort((a,b)=>(b.savedAt||'').localeCompare(a.savedAt||''))[0];
     const done = latest && (latest.savedAt||'') >= ws;
-    return `<div class="student-item" onclick="openJournalEditor('${s.id}')">
-      <div>
+    return `<div class="student-item">
+      <div onclick="openJournalEditor('${s.id}')" style="flex:1;cursor:pointer;">
         <div style="font-weight:600">${s.name}</div>
         <div style="font-size:12px;color:#888">${s.school||''} · 일지 ${jList.length}건</div>
       </div>
       <div style="display:flex;align-items:center;gap:8px;">
         <span class="badge ${done?'badge-done':'badge-need'}">${done?'이번주 완료':'업데이트 필요'}</span>
-        <span style="color:#ccc">›</span>
+        <button class="btn btn-sm btn-danger" onclick="deleteStudent('${s.id}','${s.name}')" style="padding:3px 8px;">삭제</button>
+        <span style="color:#ccc" onclick="openJournalEditor('${s.id}')" style="cursor:pointer;">›</span>
       </div>
     </div>`;
   }).join('');
@@ -472,6 +473,16 @@ window.addStudent = async function() {
   await loadAll();
   show('add-ok');
   setTimeout(()=>{ hide('add-ok'); showView('admin-list'); ['ns-name','ns-school','ns-grade','ns-clinic','ns-major','ns-email','ns-pw'].forEach(id=>document.getElementById(id).value=''); }, 1200);
+}
+
+// ── 조교: 학생 삭제 ───────────────────────────────────
+window.deleteStudent = async function(sid, name) {
+  if (!confirm(`${name} 학생을 삭제할까요?\n해당 학생의 모든 일지도 함께 삭제됩니다.`)) return;
+  await deleteDoc(doc(db, 'students', sid));
+  const journals = allJournals.filter(j => j.studentId === sid);
+  await Promise.all(journals.map(j => deleteDoc(doc(db, 'journals', j._docId))));
+  await loadAll();
+  renderAdminList();
 }
 
 // ── 조교: 일지 에디터 ─────────────────────────────────
@@ -573,7 +584,7 @@ function renderParentView() {
       <table class="report-table">
         <tr><th rowspan="2">집중공략</th><th>#1</th><th>#2</th><th>#3</th><th>#4</th><th>#5</th><th>#6</th><th>#7</th><th>#8</th></tr>
         <tr>${[1,2,3,4,5,6,7,8].map(i=>`<td><span class="${symClass(j.hw&&j.hw[i])}">${j.hw&&j.hw[i]||'-'}</span></td>`).join('')}</tr>
-        <tr><th rowspan="2"></th><th>#9</th><th>#10</th><th>#11</th><th>#12</th><th>낙오1회</th><th>낙오2회</th><th>낙오3회</th><th>낙오4회</th></tr>
+        <tr><th rowspan="2"></th><th>#9</th><th>#10</th><th>#11</th><th>#12</th><th>낙모1회</th><th>낙모2회</th><th>낙모3회</th><th>낙모4회</th></tr>
         <tr>${[9,10,11,12,13,14,15,16].map(i=>`<td><span class="${symClass(j.hw&&j.hw[i])}">${j.hw&&j.hw[i]||'-'}</span></td>`).join('')}</tr>
         <tr><th>오답노트</th><td colspan="8">${[1,2,3,4,5,6,7,8].map(i=>`${i}회: <span class="${symClass(j['hwAns'+i])}">${j['hwAns'+i]||'-'}</span>`).join(' &nbsp; ')}</td></tr>
         <tr><th>교재</th><td colspan="4" class="left">진행 중: ${j.hwCurr||'-'}</td><td colspan="4" class="left">완료: ${j.hwDone||'-'}</td></tr>
