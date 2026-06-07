@@ -97,12 +97,15 @@
     .entry-date { font-size: 12px; color: #888; margin-bottom: 6px; }
 
     .hidden { display: none !important; }
+    .loading-overlay { position:fixed; inset:0; background:rgba(255,255,255,0.85); display:flex; align-items:center; justify-content:center; z-index:999; font-size:14px; color:#666; }
     .flex-row { display: flex; gap: 10px; align-items: center; }
     .mt { margin-top: 8px; }
     .empty { text-align: center; padding: 2rem; color: #aaa; font-size: 13px; }
   </style>
 </head>
 <body>
+
+<div id="loading-overlay" class="loading-overlay">⏳ 불러오는 중...</div>
 
 <!-- 로그인 화면 -->
 <div id="page-login" class="login-page">
@@ -363,44 +366,69 @@
   </div>
 </div>
 
-<script>
-// ── 데이터 ──────────────────────────────────────────
-function loadData() {
-  const s = localStorage.getItem('v2_students');
-  const j = localStorage.getItem('v2_journals');
-  return {
-    students: s ? JSON.parse(s) : [
-      { id: 0, name: '관리자(조교)', email: 'admin@admin.com', pw: 'admin1234', role: 'admin' }
-    ],
-    journals: j ? JSON.parse(j) : []
-  };
-}
-function save() { localStorage.setItem('v2_students', JSON.stringify(db.students)); localStorage.setItem('v2_journals', JSON.stringify(db.journals)); }
-let db = loadData();
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, doc, getDoc, setDoc, collection, getDocs, addDoc, updateDoc, deleteDoc, query, where } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBDM3aZtiHXqyYyL2ElLL1veZdZO6jr06w",
+  authDomain: "cnhmath-e6482.firebaseapp.com",
+  projectId: "cnhmath-e6482",
+  storageBucket: "cnhmath-e6482.firebasestorage.app",
+  messagingSenderId: "742505260440",
+  appId: "1:742505260440:web:954e18586ee0ba33de77ed",
+  measurementId: "G-886WVJV6T1"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
 let currentUser = null;
 let currentStudentId = null;
 let editingJournalId = null;
+let allStudents = [];
+let allJournals = [];
+
+// ── 초기 어드민 계정 보장 ──────────────────────────────
+async function ensureAdmin() {
+  const ref = doc(db, 'students', 'admin');
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    await setDoc(ref, { id: 'admin', name: '관리자(조교)', email: 'admin@admin.com', pw: 'admin1234', role: 'admin' });
+  }
+}
+
+// ── 데이터 로드 ────────────────────────────────────────
+async function loadAll() {
+  const [sSnap, jSnap] = await Promise.all([
+    getDocs(collection(db, 'students')),
+    getDocs(collection(db, 'journals'))
+  ]);
+  allStudents = sSnap.docs.map(d => d.data());
+  allJournals = jSnap.docs.map(d => ({ ...d.data(), _docId: d.id }));
+}
 
 // ── 로그인/로그아웃 ──────────────────────────────────
-function doLogin() {
+window.doLogin = async function() {
   const email = document.getElementById('login-email').value.trim();
   const pw = document.getElementById('login-pw').value.trim();
-  const user = db.students.find(s => s.email === email && s.pw === pw);
+  await loadAll();
+  const user = allStudents.find(s => s.email === email && s.pw === pw);
   if (!user) { document.getElementById('login-error').style.display = 'block'; return; }
   document.getElementById('login-error').style.display = 'none';
   currentUser = user;
   if (user.role === 'admin') { showPage('admin'); renderAdminList(); document.getElementById('admin-name-display').textContent = user.name; }
   else { showPage('parent'); renderParentView(); document.getElementById('parent-name-display').textContent = user.name + ' 학부모님'; }
 }
-function doLogout() { currentUser = null; showPage('login'); document.getElementById('login-email').value=''; document.getElementById('login-pw').value=''; }
+window.doLogout = function() { currentUser = null; showPage('login'); document.getElementById('login-email').value=''; document.getElementById('login-pw').value=''; }
 
 // ── 페이지/뷰 전환 ────────────────────────────────────
 function showPage(p) {
   ['login','admin','parent'].forEach(x => document.getElementById('page-'+x).classList.toggle('hidden', x!==p));
 }
-function showView(v) {
-  ['admin-list','admin-add-student','admin-journal'].forEach(x => document.getElementById(x).classList.toggle('hidden', x!==v));
-  if (v==='admin-list') renderAdminList();
+window.showView = function(vName) {
+  ['admin-list','admin-add-student','admin-journal'].forEach(x => document.getElementById(x).classList.toggle('hidden', x!==vName));
+  if (vName==='admin-list') renderAdminList();
 }
 
 // ── 조교: 학생 목록 ───────────────────────────────────
@@ -410,18 +438,18 @@ function getWeekStart() {
   return new Date(new Date().setDate(diff)).toISOString().slice(0,10);
 }
 function renderAdminList() {
-  const realStudents = db.students.filter(s => s.role !== 'admin');
+  const realStudents = allStudents.filter(s => s.role !== 'admin');
   document.getElementById('stat-total').textContent = realStudents.length;
-  document.getElementById('stat-entries').textContent = db.journals.length;
+  document.getElementById('stat-entries').textContent = allJournals.length;
   const ws = getWeekStart();
-  document.getElementById('stat-week').textContent = db.journals.filter(j => (j.savedAt||'') >= ws).length;
+  document.getElementById('stat-week').textContent = allJournals.filter(j => (j.savedAt||'') >= ws).length;
   const list = document.getElementById('student-list');
   if (!realStudents.length) { list.innerHTML = '<div class="empty">아직 등록된 학생이 없어요</div>'; return; }
   list.innerHTML = realStudents.map(s => {
-    const jList = db.journals.filter(j => j.studentId === s.id);
+    const jList = allJournals.filter(j => j.studentId === s.id);
     const latest = jList.sort((a,b)=>(b.savedAt||'').localeCompare(a.savedAt||''))[0];
     const done = latest && (latest.savedAt||'') >= ws;
-    return `<div class="student-item" onclick="openJournalEditor(${s.id})">
+    return `<div class="student-item" onclick="openJournalEditor('${s.id}')">
       <div>
         <div style="font-weight:600">${s.name}</div>
         <div style="font-size:12px;color:#888">${s.school||''} · 일지 ${jList.length}건</div>
@@ -435,20 +463,21 @@ function renderAdminList() {
 }
 
 // ── 조교: 학생 추가 ───────────────────────────────────
-let nextId = () => (db.students.length ? Math.max(...db.students.map(s=>s.id))+1 : 1);
-function addStudent() {
+window.addStudent = async function() {
   const name=v('ns-name'),school=v('ns-school'),grade=v('ns-grade'),clinic=v('ns-clinic'),major=v('ns-major'),email=v('ns-email'),pw=v('ns-pw');
   if (!name||!email||!pw) { show('add-err'); return; } hide('add-err');
-  if (db.students.find(s=>s.email===email)) { document.getElementById('add-err').textContent='이미 등록된 이메일이에요.'; show('add-err'); return; }
-  db.students.push({ id:nextId(), name, school, grade, clinic, major, email, pw, role:'parent' });
-  save();
-  show('add-ok'); setTimeout(()=>{ hide('add-ok'); showView('admin-list'); ['ns-name','ns-school','ns-grade','ns-clinic','ns-major','ns-email','ns-pw'].forEach(id=>document.getElementById(id).value=''); }, 1200);
+  if (allStudents.find(s=>s.email===email)) { document.getElementById('add-err').textContent='이미 등록된 이메일이에요.'; show('add-err'); return; }
+  const newId = 'stu_' + Date.now();
+  await setDoc(doc(db, 'students', newId), { id:newId, name, school, grade, clinic, major, email, pw, role:'parent' });
+  await loadAll();
+  show('add-ok');
+  setTimeout(()=>{ hide('add-ok'); showView('admin-list'); ['ns-name','ns-school','ns-grade','ns-clinic','ns-major','ns-email','ns-pw'].forEach(id=>document.getElementById(id).value=''); }, 1200);
 }
 
 // ── 조교: 일지 에디터 ─────────────────────────────────
-function openJournalEditor(sid) {
+window.openJournalEditor = function(sid) {
   currentStudentId = sid; editingJournalId = null;
-  const s = db.students.find(x=>x.id===sid);
+  const s = allStudents.find(x=>x.id===sid);
   document.getElementById('journal-title').textContent = s.name + ' 상담일지 작성';
   clearJournalForm();
   hide('delete-journal-btn');
@@ -482,31 +511,35 @@ function readJournalForm() {
   for(let i=1;i<=8;i++) hwAns['hwAns'+i] = gv('hw-ans'+i);
   return { studentId:currentStudentId, period:gv('j-period'), mid:gv('j-mid'), mock:gv('j-mock'), hw, ...hwAns, hwCurr:gv('hw-curr'), hwDone:gv('hw-done'), hwSchool:gv('hw-school'), hwRec:gv('hw-rec'), exams, progress, counsel, savedAt:new Date().toISOString().slice(0,10) };
 }
-function saveJournal() {
+window.saveJournal = async function() {
   const j = readJournalForm();
   if (editingJournalId !== null) {
-    const idx = db.journals.findIndex(x=>x.id===editingJournalId);
-    if (idx>=0) { j.id=editingJournalId; db.journals[idx]=j; }
-  } else { j.id = Date.now(); db.journals.push(j); }
-  save(); editingJournalId = null; show('journal-ok'); setTimeout(()=>hide('journal-ok'),1500);
+    await updateDoc(doc(db, 'journals', editingJournalId), j);
+  } else {
+    const ref = await addDoc(collection(db, 'journals'), j);
+    editingJournalId = ref.id;
+  }
+  await loadAll();
+  show('journal-ok'); setTimeout(()=>hide('journal-ok'),1500);
   renderPrevJournals(currentStudentId);
 }
-function deleteJournal() {
+window.deleteJournal = async function() {
   if (!confirm('이 일지를 삭제할까요?')) return;
-  db.journals = db.journals.filter(j=>j.id!==editingJournalId);
-  save(); editingJournalId=null; clearJournalForm(); hide('delete-journal-btn'); renderPrevJournals(currentStudentId);
+  await deleteDoc(doc(db, 'journals', editingJournalId));
+  await loadAll();
+  editingJournalId=null; clearJournalForm(); hide('delete-journal-btn'); renderPrevJournals(currentStudentId);
 }
 function renderPrevJournals(sid) {
-  const jList = db.journals.filter(j=>j.studentId===sid).sort((a,b)=>b.savedAt.localeCompare(a.savedAt));
+  const jList = allJournals.filter(j=>j.studentId===sid).sort((a,b)=>b.savedAt.localeCompare(a.savedAt));
   const el = document.getElementById('prev-journals-list');
   if (!jList.length) { el.innerHTML='<div class="empty">아직 저장된 일지가 없어요</div>'; return; }
-  el.innerHTML = jList.map(j=>`<div class="student-item" onclick="editJournal(${j.id})">
+  el.innerHTML = jList.map(j=>`<div class="student-item" onclick="editJournal('${j._docId}')">
     <div><div style="font-weight:600">${j.period||'제목 없음'} 상담일지</div><div style="font-size:12px;color:#888">저장일: ${j.savedAt}</div></div>
     <span style="color:#ccc">›</span>
   </div>`).join('');
 }
-function editJournal(jid) {
-  const j = db.journals.find(x=>x.id===jid);
+window.editJournal = function(jid) {
+  const j = allJournals.find(x=>x._docId===jid);
   if (!j) return;
   editingJournalId = jid;
   loadJournalForm(j);
@@ -518,7 +551,7 @@ function editJournal(jid) {
 function symClass(s) { if(s==='○') return 'symbol-o'; if(s==='X') return 'symbol-x'; if(s==='△') return 'symbol-tri'; return ''; }
 function renderParentView() {
   const s = currentUser;
-  const jList = db.journals.filter(j=>j.studentId===s.id).sort((a,b)=>b.savedAt.localeCompare(a.savedAt));
+  const jList = allJournals.filter(j=>j.studentId===s.id).sort((a,b)=>b.savedAt.localeCompare(a.savedAt));
   const el = document.getElementById('parent-journal-list');
   if (!jList.length) { el.innerHTML='<div class="empty" style="margin-top:3rem;">아직 작성된 상담일지가 없습니다.<br>조금만 기다려주세요 😊</div>'; return; }
   el.innerHTML = jList.map(j => `
@@ -528,7 +561,6 @@ function renderParentView() {
       <div class="report-academy">🏫 최낙현수학</div>
     </div>
     <div class="report-main-title">◇ ${j.period||''} 상담 일지 ◇</div>
-
     <div class="report-section">
       <div class="report-section-title">학생 정보</div>
       <table class="report-table">
@@ -536,7 +568,6 @@ function renderParentView() {
         <tr><th>희망학과</th><td>${s.major||''}</td><th>클리닉 시간</th><td colspan="3">${s.clinic||''}</td><th>6월 모의고사 성적</th><td>${j.mock||''}</td></tr>
       </table>
     </div>
-
     <div class="report-section">
       <div class="report-section-title">숙제 및 교재 진행 상황 (○△X)</div>
       <table class="report-table">
@@ -548,7 +579,6 @@ function renderParentView() {
         <tr><th>교재</th><td colspan="4" class="left">진행 중: ${j.hwCurr||'-'}</td><td colspan="4" class="left">완료: ${j.hwDone||'-'}</td></tr>
       </table>
     </div>
-
     <div class="report-section">
       <div class="report-section-title">리허설 시험 성적</div>
       <table class="report-table">
@@ -556,7 +586,6 @@ function renderParentView() {
         ${[1,2,3,4].map(i=>j.exams&&j.exams[i]&&(j.exams[i].school||j.exams[i].score)?`<tr><td>${i}회</td><td>${j.exams[i].school||''}</td><td>${j.exams[i].score||''}</td><td>${j.exams[i].cut||''}</td><td class="left">${j.exams[i].fb||''}</td></tr>`:'' ).join('')}
       </table>
     </div>
-
     <div class="report-section">
       <div class="report-section-title">개별 학습 진행 상황</div>
       <table class="report-table">
@@ -564,7 +593,6 @@ function renderParentView() {
         ${[1,2,3,4,5,6,7,8].map(i=>j.progress&&j.progress[i]?`<tr><td>${i}주차</td><td>${j.progress[i].date||''}</td><td><span class="${symClass(j.progress[i].sym)}">${j.progress[i].sym||'-'}</span></td><td class="left">${j.progress[i].content||''}</td></tr>`:'').join('')}
       </table>
     </div>
-
     <div class="report-section">
       <div class="report-section-title">시험, 숙제, 학습 습관, 학습 방향, 고민 등 종합 상담</div>
       <table class="report-table">
@@ -581,6 +609,10 @@ function gv(id) { return document.getElementById(id)?.value||''; }
 function sv(id, val) { const el=document.getElementById(id); if(el) el.value=val||''; }
 function show(id) { document.getElementById(id).style.display='block'; }
 function hide(id) { document.getElementById(id).style.display='none'; }
+
+// ── 시작 ─────────────────────────────────────────────
+await ensureAdmin();
+document.getElementById('loading-overlay').style.display = 'none';
 </script>
 </body>
 </html>
